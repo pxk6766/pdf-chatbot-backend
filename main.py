@@ -30,7 +30,6 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = Pinecone(api_key=PINECONE_API_KEY)
 INDEX_NAME = "pdf-chatbot"
 
-# Create or connect to index
 print("🔍 Checking Pinecone index...")
 existing = pc.list_indexes().names()
 if INDEX_NAME not in existing:
@@ -49,7 +48,6 @@ else:
 
 index = pc.Index(INDEX_NAME)
 
-# Sentence transformer (LOCAL)
 print("📦 Loading sentence transformer...")
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 print("✅ Model loaded!")
@@ -64,7 +62,6 @@ def chunk_text(text, chunk_size=1000, overlap=200):
         start += chunk_size - overlap
     return [c for c in chunks if c.strip()]
 
-# Retry Helper for Pinecone 503 errors (Cold Starts)
 def safe_index_operation(func, *args, **kwargs):
     max_retries = 3
     for attempt in range(max_retries):
@@ -104,7 +101,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         chunks = chunk_text(pdf_text)
         embeddings = embedding_model.encode(chunks).tolist()
         
-        # Clear old data safely
+        # Clears old data safely
         try:
             stats = safe_index_operation(index.describe_index_stats)
             if stats.get('total_vector_count', 0) > 0:
@@ -112,10 +109,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         except:
             pass
 
-        # UPDATED: Sanitized and Truncated Metadata to avoid 40KB limit
         vectors = []
         for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
-            # Force string type and cap at 30k chars to stay safe under 40KB limit
             safe_chunk = str(chunk)[:30000] 
             vectors.append({
                 "id": f"chunk_{i}", 
@@ -123,7 +118,6 @@ async def upload_pdf(file: UploadFile = File(...)):
                 "metadata": {"text": safe_chunk, "source": str(file.filename)}
             })
 
-        # Batch upsert with safety retries
         for i in range(0, len(vectors), 100):
             safe_index_operation(index.upsert, vectors=vectors[i:i+100])
         
@@ -147,7 +141,6 @@ async def ask(request: QuestionRequest):
 
         q_emb = embedding_model.encode([question]).tolist()[0]
         
-        # Search with retry logic for serverless cold starts
         results = safe_index_operation(index.query, vector=q_emb, top_k=3, include_metadata=True)
         
         if not results['matches']:
